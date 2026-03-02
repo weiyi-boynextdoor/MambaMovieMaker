@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MambaMovieMaker · TTS</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: #0f1117;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 680px;
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 16px;
+      padding: 2.5rem;
+      box-shadow: 0 24px 48px rgba(0,0,0,.5);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -.5px;
+      margin-bottom: 2rem;
+      background: linear-gradient(90deg, #818cf8, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    label {
+      display: block;
+      font-size: .8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #94a3b8;
+      margin-bottom: .5rem;
+    }
+
+    input[type="text"], textarea {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #e2e8f0;
+      font-size: .95rem;
+      padding: .75rem 1rem;
+      transition: border-color .2s;
+      outline: none;
+      font-family: inherit;
+    }
+    input[type="text"]:focus, textarea:focus {
+      border-color: #818cf8;
+    }
+
+    .field { margin-bottom: 1.25rem; }
+
+    textarea { resize: vertical; min-height: 180px; line-height: 1.6; }
+
+    .hint {
+      font-size: .75rem;
+      color: #64748b;
+      margin-top: .35rem;
+    }
+
+    button#submit-btn {
+      width: 100%;
+      margin-top: .5rem;
+      padding: .85rem;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    button#submit-btn:hover:not(:disabled) { opacity: .9; }
+    button#submit-btn:active:not(:disabled) { transform: scale(.98); }
+    button#submit-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    #status {
+      margin-top: 1rem;
+      font-size: .875rem;
+      min-height: 1.2em;
+      text-align: center;
+    }
+    #status.error { color: #f87171; }
+    #status.info  { color: #94a3b8; }
+
+    #result {
+      display: none;
+      margin-top: 1.75rem;
+      border-top: 1px solid #2d3148;
+      padding-top: 1.75rem;
+    }
+
+    audio {
+      width: 100%;
+      border-radius: 8px;
+      accent-color: #818cf8;
+    }
+
+    #download-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      margin-top: 1rem;
+      padding: .6rem 1.2rem;
+      border: 1px solid #4f46e5;
+      border-radius: 8px;
+      color: #a5b4fc;
+      font-size: .875rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: background .2s;
+    }
+    #download-btn:hover { background: rgba(99,102,241,.15); }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: .4rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>MambaMovieMaker · 文字转语音</h1>
+
+  <div class="field">
+    <label for="voice-id">Voice ID</label>
+    <input type="text" id="voice-id" value="{{ default_voice_id }}" spellcheck="false" />
+    <p class="hint">留空则使用默认 Voice ID</p>
+  </div>
+
+  <div class="field">
+    <label for="text-input">输入文本</label>
+    <textarea id="text-input" placeholder="在此输入要转换为语音的文字…"></textarea>
+  </div>
+
+  <button id="submit-btn" onclick="generateTTS()">生成语音</button>
+
+  <p id="status" class="info"></p>
+
+  <div id="result">
+    <audio id="audio-player" controls></audio>
+    <br />
+    <a id="download-btn" href="#" download="output.mp3">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      下载 MP3
+    </a>
+  </div>
+</div>
+
+<script>
+  async function generateTTS() {
+    const text    = document.getElementById('text-input').value.trim();
+    const voiceId = document.getElementById('voice-id').value.trim();
+    const btn     = document.getElementById('submit-btn');
+    const status  = document.getElementById('status');
+    const result  = document.getElementById('result');
+
+    if (!text) {
+      setStatus('请输入要转换的文本', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>生成中…';
+    setStatus('正在连接 Minimax API…', 'info');
+    result.style.display = 'none';
+
+    try {
+      const resp = await fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice_id: voiceId }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        throw new Error(err.error || '请求失败');
+      }
+
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+
+      document.getElementById('audio-player').src = url;
+      document.getElementById('download-btn').href = url;
+      result.style.display = 'block';
+      setStatus('', 'info');
+    } catch (e) {
+      setStatus('错误：' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '生成语音';
+    }
+  }
+
+  function setStatus(msg, cls) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = cls;
+  }
+</script>
+</body>
+</html>
