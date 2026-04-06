@@ -102,30 +102,80 @@
       background: var(--canvas-bg);
       aspect-ratio: 16 / 9;
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+      display: flex;
+      flex-direction: column;
     }
 
     canvas {
       width: 100%;
-      height: 100%;
+      height: auto;
+      flex: 1 1 auto;
       display: block;
       background: var(--canvas-bg);
     }
 
-    .preview-footer {
+    .viewport-bar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 12px 14px 0;
-      color: var(--muted);
-      font-size: 0.95rem;
+      padding: 11px 14px 10px;
+      background: rgba(255, 255, 255, 0.96);
+      color: var(--text);
+      font-size: 0.92rem;
       font-weight: 600;
+      border-top: 1px solid rgba(0, 0, 0, 0.08);
     }
 
+    .viewport-left,
+    .viewport-right,
     .preview-stats {
       display: flex;
+      align-items: center;
       gap: 16px;
       flex-wrap: wrap;
+    }
+
+    .viewport-left {
+      gap: 12px;
+    }
+
+    .viewport-right {
+      gap: 10px;
+    }
+
+    .icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #111;
+      padding: 0;
+    }
+
+    .icon-button:hover {
+      background: rgba(0, 0, 0, 0.06);
+      filter: none;
+    }
+
+    .icon-button svg {
+      width: 23px;
+      height: 23px;
+      fill: currentColor;
+    }
+
+    .record-button.is-recording {
+      color: #c62020;
+    }
+
+    .record-label {
+      font-size: 0.9rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
     }
 
     .preview-meta {
@@ -345,7 +395,7 @@
         padding: 16px;
       }
 
-      .preview-footer,
+      .viewport-bar,
       .controls {
         flex-direction: column;
         align-items: flex-start;
@@ -377,14 +427,38 @@
       <article class="card preview-shell">
         <div class="canvas-frame">
           <canvas id="shader-canvas"></canvas>
-        </div>
-        <div class="preview-footer">
-          <div class="preview-stats">
-            <span id="time-readout">0.00 s</span>
-            <span id="fps-readout">0.0 fps</span>
-            <span id="resolution-readout">1280 x 720</span>
+          <div class="viewport-bar">
+            <div class="viewport-left">
+              <button class="icon-button" id="restart-button" type="button" title="Go back to start" aria-label="Go back to start">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 5h3v14H6zM18.6 5.3v13.4L10.6 12z"></path>
+                </svg>
+              </button>
+              <button class="icon-button" id="play-button" type="button" title="Pause playback" aria-label="Pause playback">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path id="play-icon-shape" d="M7 5h4v14H7zM13 5h4v14h-4z"></path>
+                </svg>
+              </button>
+              <div class="preview-stats">
+                <span id="time-readout">0.00 s</span>
+                <span id="fps-readout">0.0 fps</span>
+                <span id="resolution-readout">1280 x 720</span>
+              </div>
+            </div>
+            <div class="viewport-right">
+              <button class="icon-button record-button" id="record-button" type="button" title="Record canvas" aria-label="Record canvas">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="7"></circle>
+                </svg>
+              </button>
+              <span class="record-label" id="record-label">REC</span>
+              <button class="icon-button" id="fullscreen-button" type="button" title="Maximize viewport" aria-label="Maximize viewport">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 10V4h6v2H6v4zm10-6h6v6h-2V6h-4zM6 18h4v2H4v-6h2zm12-4h2v6h-6v-2h4z"></path>
+                </svg>
+              </button>
+            </div>
           </div>
-          <span id="frame-readout">Frame 0</span>
         </div>
         <div class="preview-meta">
           <h1>Shader Playground</h1>
@@ -462,7 +536,12 @@
     const timeReadout = document.getElementById('time-readout');
     const fpsReadout = document.getElementById('fps-readout');
     const resolutionReadout = document.getElementById('resolution-readout');
-    const frameReadout = document.getElementById('frame-readout');
+    const restartButton = document.getElementById('restart-button');
+    const playButton = document.getElementById('play-button');
+    const playIconShape = document.getElementById('play-icon-shape');
+    const recordButton = document.getElementById('record-button');
+    const recordLabel = document.getElementById('record-label');
+    const fullscreenButton = document.getElementById('fullscreen-button');
 
     const gl = canvas.getContext('webgl', {
       antialias: false,
@@ -501,6 +580,11 @@ void main() {
     let mouseDownX = -1;
     let mouseDownY = -1;
     let mousePressed = false;
+    let isPlaying = true;
+    let pausedElapsedSeconds = 0;
+    let pausedAt = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
 
     const quadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
@@ -630,6 +714,10 @@ void main() {
       fpsAccumulator = 0;
       displayedFps = 0;
       frameCount = 0;
+      pausedElapsedSeconds = 0;
+      pausedAt = null;
+      isPlaying = true;
+      updatePlayButton();
     }
 
     function compileCurrentShader() {
@@ -647,20 +735,139 @@ void main() {
       }
     }
 
+    function updatePlayButton() {
+      if (isPlaying) {
+        playButton.title = 'Pause playback';
+        playButton.setAttribute('aria-label', 'Pause playback');
+        playIconShape.setAttribute('d', 'M7 5h4v14H7zM13 5h4v14h-4z');
+      } else {
+        playButton.title = 'Play';
+        playButton.setAttribute('aria-label', 'Play');
+        playIconShape.setAttribute('d', 'M8 5v14l10-7z');
+      }
+    }
+
+    function restartPlayback() {
+      startTime = performance.now();
+      lastFrameTime = startTime;
+      lastFpsTime = startTime;
+      fpsAccumulator = 0;
+      displayedFps = 0;
+      frameCount = 0;
+      pausedElapsedSeconds = 0;
+      pausedAt = null;
+      isPlaying = true;
+      updatePlayButton();
+    }
+
+    function togglePlayback() {
+      const now = performance.now();
+
+      if (isPlaying) {
+        pausedElapsedSeconds = (now - startTime) * 0.001;
+        pausedAt = now;
+        isPlaying = false;
+      } else {
+        startTime = now - pausedElapsedSeconds * 1000;
+        lastFrameTime = now;
+        lastFpsTime = now;
+        fpsAccumulator = 0;
+        pausedAt = null;
+        isPlaying = true;
+      }
+
+      updatePlayButton();
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+    }
+
+    async function toggleRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        stopRecording();
+        return;
+      }
+
+      if (!canvas.captureStream || typeof MediaRecorder === 'undefined') {
+        setStatus('Recording is not supported in this browser.', 'error');
+        return;
+      }
+
+      try {
+        const stream = canvas.captureStream(60);
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+      } catch (error) {
+        try {
+          const stream = canvas.captureStream(60);
+          mediaRecorder = new MediaRecorder(stream);
+        } catch (fallbackError) {
+          setStatus('Could not start recording on this browser.', 'error');
+          return;
+        }
+      }
+
+      recordedChunks = [];
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        recordButton.classList.remove('is-recording');
+        recordLabel.textContent = 'REC';
+
+        if (recordedChunks.length === 0) {
+          return;
+        }
+
+        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'shader-recording.webm';
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setStatus('Recording saved.', 'success');
+      };
+
+      mediaRecorder.start();
+      recordButton.classList.add('is-recording');
+      recordLabel.textContent = 'STOP';
+      setStatus('Recording canvas output...', 'success');
+    }
+
+    async function toggleFullscreen() {
+      if (document.fullscreenElement === canvas.parentElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      if (canvas.parentElement.requestFullscreen) {
+        await canvas.parentElement.requestFullscreen();
+      }
+    }
+
     function render(now) {
       resizeCanvasToDisplaySize();
 
       if (currentProgram && currentUniforms) {
-        const elapsedSeconds = (now - startTime) * 0.001;
-        const deltaSeconds = (now - lastFrameTime) * 0.001;
-        lastFrameTime = now;
-        frameCount += 1;
-        fpsAccumulator += 1;
+        const elapsedSeconds = isPlaying ? (now - startTime) * 0.001 : pausedElapsedSeconds;
+        const deltaSeconds = isPlaying ? (now - lastFrameTime) * 0.001 : 0;
 
-        if (now - lastFpsTime >= 500) {
-          displayedFps = fpsAccumulator * 1000 / (now - lastFpsTime);
-          fpsAccumulator = 0;
-          lastFpsTime = now;
+        if (isPlaying) {
+          lastFrameTime = now;
+          frameCount += 1;
+          fpsAccumulator += 1;
+
+          if (now - lastFpsTime >= 500) {
+            displayedFps = fpsAccumulator * 1000 / (now - lastFpsTime);
+            fpsAccumulator = 0;
+            lastFpsTime = now;
+          }
         }
 
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -677,7 +884,6 @@ void main() {
         timeReadout.textContent = `${elapsedSeconds.toFixed(2)} s`;
         fpsReadout.textContent = `${displayedFps.toFixed(1)} fps`;
         resolutionReadout.textContent = `${canvas.width} x ${canvas.height}`;
-        frameReadout.textContent = `Frame ${frameCount}`;
       }
 
       requestAnimationFrame(render);
@@ -705,6 +911,14 @@ void main() {
       updateLineNumbers();
       compileCurrentShader();
     });
+    restartButton.addEventListener('click', restartPlayback);
+    playButton.addEventListener('click', togglePlayback);
+    recordButton.addEventListener('click', toggleRecording);
+    fullscreenButton.addEventListener('click', () => {
+      toggleFullscreen().catch(() => {
+        setStatus('Fullscreen request was blocked by the browser.', 'error');
+      });
+    });
 
     canvas.addEventListener('mousemove', (event) => {
       updateMouse(event);
@@ -729,6 +943,7 @@ void main() {
     });
 
     window.addEventListener('resize', resizeCanvasToDisplaySize);
+    document.addEventListener('fullscreenchange', resizeCanvasToDisplaySize);
 
     compileCurrentShader();
     requestAnimationFrame(render);
