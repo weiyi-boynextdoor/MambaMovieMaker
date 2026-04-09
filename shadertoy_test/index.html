@@ -275,6 +275,13 @@
       text-decoration: none;
     }
 
+    .ghost-button.is-active {
+      background: rgba(246, 173, 47, 0.18);
+      border-color: rgba(234, 150, 0, 0.45);
+      color: #8a5300;
+      font-weight: 700;
+    }
+
     .status {
       min-height: 1.4em;
       font-size: 0.95rem;
@@ -478,6 +485,7 @@
           <div class="controls-left">
             <button class="compile-button" id="compile-button" type="button">COMPILE</button>
             <button class="ghost-button" id="reset-button" type="button">Reset Example</button>
+            <button class="ghost-button" id="audio-button" type="button">Enable Mic</button>
           </div>
           <div class="controls-right">
             <div class="status" id="compile-status">Ready to compile.</div>
@@ -487,7 +495,7 @@
         <div class="editor-wrap">
           <div class="editor-label">
             <span>Fragment Shader</span>
-            <span>Inputs: <code>iResolution</code>, <code>iTime</code>, <code>iTimeDelta</code>, <code>iFrame</code>, <code>iMouse</code></span>
+            <span>Inputs: <code>iResolution</code>, <code>iTime</code>, <code>iTimeDelta</code>, <code>iFrame</code>, <code>iMouse</code>, <code>iAudioIntensity</code></span>
           </div>
           <div class="editor-shell">
             <pre class="line-numbers" id="line-numbers">1</pre>
@@ -497,7 +505,7 @@
 
         <pre class="log" id="compile-log">Compile output will appear here.</pre>
         <div class="hint">
-          Mouse drag updates <code>iMouse.xy</code>. The compile step keeps the current shader running if the new one fails.
+          Mouse drag updates <code>iMouse.xy</code>. Enable the mic to drive <code>iAudioIntensity</code> with live input. The compile step keeps the current shader running if the new one fails.
         </div>
       </article>
     </section>
@@ -542,6 +550,7 @@
     const recordButton = document.getElementById('record-button');
     const recordLabel = document.getElementById('record-label');
     const fullscreenButton = document.getElementById('fullscreen-button');
+    const audioButton = document.getElementById('audio-button');
 
     const gl = canvas.getContext('webgl', {
       antialias: false,
@@ -585,6 +594,13 @@ void main() {
     let pausedAt = null;
     let mediaRecorder = null;
     let recordedChunks = [];
+    let audioContext = null;
+    let microphoneStream = null;
+    let microphoneSource = null;
+    let audioAnalyser = null;
+    let audioData = null;
+    let audioIntensity = 0;
+    let audioEnabled = false;
 
     const quadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
@@ -639,6 +655,7 @@ uniform float iTime;
 uniform float iTimeDelta;
 uniform int iFrame;
 uniform vec4 iMouse;
+uniform float iAudioIntensity;
 
 #line 1
 ${userShaderSource}
@@ -689,7 +706,8 @@ void main() {
         iTime: gl.getUniformLocation(program, 'iTime'),
         iTimeDelta: gl.getUniformLocation(program, 'iTimeDelta'),
         iFrame: gl.getUniformLocation(program, 'iFrame'),
-        iMouse: gl.getUniformLocation(program, 'iMouse')
+        iMouse: gl.getUniformLocation(program, 'iMouse'),
+        iAudioIntensity: gl.getUniformLocation(program, 'iAudioIntensity')
       };
 
       return { program, attributes, uniforms };
@@ -782,6 +800,111 @@ void main() {
     function stopRecording() {
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
+      }
+    }
+
+    function updateAudioButton() {
+      audioButton.textContent = audioEnabled ? 'Disable Mic' : 'Enable Mic';
+      audioButton.classList.toggle('is-active', audioEnabled);
+      audioButton.setAttribute('aria-pressed', String(audioEnabled));
+    }
+
+    function sampleAudioIntensity() {
+      if (!audioAnalyser || !audioData) {
+        audioIntensity += (0 - audioIntensity) * 0.12;
+        return audioIntensity;
+      }
+
+      audioAnalyser.getByteTimeDomainData(audioData);
+
+      let sumSquares = 0;
+      for (let index = 0; index < audioData.length; index += 1) {
+        const centered = (audioData[index] - 128) / 128;
+        sumSquares += centered * centered;
+      }
+
+      const rms = Math.sqrt(sumSquares / audioData.length);
+      const normalized = Math.min(1, rms * 4.5);
+      audioIntensity += (normalized - audioIntensity) * 0.18;
+      return audioIntensity;
+    }
+
+    async function disableAudioInput() {
+      audioEnabled = false;
+      audioIntensity = 0;
+
+      if (microphoneSource) {
+        microphoneSource.disconnect();
+        microphoneSource = null;
+      }
+
+      if (microphoneStream) {
+        microphoneStream.getTracks().forEach((track) => track.stop());
+        microphoneStream = null;
+      }
+
+      if (audioContext && audioContext.state !== 'closed') {
+        await audioContext.close();
+      }
+
+      audioContext = null;
+      audioAnalyser = null;
+      audioData = null;
+      updateAudioButton();
+    }
+
+    async function enableAudioInput() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Microphone input is not supported in this browser.');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false
+        }
+      });
+
+      const Context = window.AudioContext || window.webkitAudioContext;
+      if (!Context) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error('Web Audio API is not available in this browser.');
+      }
+
+      const context = new Context();
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.8;
+      source.connect(analyser);
+
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
+
+      microphoneStream = stream;
+      audioContext = context;
+      microphoneSource = source;
+      audioAnalyser = analyser;
+      audioData = new Uint8Array(analyser.fftSize);
+      audioEnabled = true;
+      updateAudioButton();
+    }
+
+    async function toggleAudioInput() {
+      if (audioEnabled) {
+        await disableAudioInput();
+        setStatus('Microphone input disabled.', 'success');
+        return;
+      }
+
+      try {
+        await enableAudioInput();
+        setStatus('Microphone input enabled. Shader now receives iAudioIntensity.', 'success');
+      } catch (error) {
+        await disableAudioInput();
+        setStatus(error.message || 'Could not enable microphone input.', 'error');
       }
     }
 
@@ -879,6 +1002,7 @@ void main() {
         const clickX = mousePressed ? mouseDownX : -Math.abs(mouseDownX);
         const clickY = mousePressed ? mouseDownY : -Math.abs(mouseDownY);
         gl.uniform4f(currentUniforms.iMouse, mouseX, mouseY, clickX, clickY);
+        gl.uniform1f(currentUniforms.iAudioIntensity, sampleAudioIntensity());
         gl.drawArrays(gl.TRIANGLES, 0, 6);
 
         timeReadout.textContent = `${elapsedSeconds.toFixed(2)} s`;
@@ -910,6 +1034,9 @@ void main() {
       shaderInput.value = DEFAULT_SHADER;
       updateLineNumbers();
       compileCurrentShader();
+    });
+    audioButton.addEventListener('click', () => {
+      toggleAudioInput();
     });
     restartButton.addEventListener('click', restartPlayback);
     playButton.addEventListener('click', togglePlayback);
@@ -944,8 +1071,12 @@ void main() {
 
     window.addEventListener('resize', resizeCanvasToDisplaySize);
     document.addEventListener('fullscreenchange', resizeCanvasToDisplaySize);
+    window.addEventListener('beforeunload', () => {
+      disableAudioInput();
+    });
 
     compileCurrentShader();
+    updateAudioButton();
     requestAnimationFrame(render);
   </script>
 </body>
