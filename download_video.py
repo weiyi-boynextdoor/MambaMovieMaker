@@ -18,12 +18,12 @@ def download(
         A yt-dlp template for naming the output file. If omitted the default
         template from yt-dlp will be used (e.g. "%(title)s.%(ext)s").
     """
-    ydl_opts: dict = {
-        "http_headers": {
-            "Origin": "https://www.bilibili.com",
-            "Referer": "https://www.bilibili.com/",
-        },
-    }
+    # ydl_opts: dict = {
+    #     "http_headers": {
+    #         "Origin": "https://www.bilibili.com",
+    #         "Referer": "https://www.bilibili.com/",
+    #     },
+    # }
     # if output_template:
     #     ydl_opts["outtmpl"] = output_template
     # if cookies_from_browser:
@@ -31,7 +31,7 @@ def download(
     # if cookies_file:
     #     ydl_opts["cookiefile"] = cookies_file
 
-    with YoutubeDL(ydl_opts) as ydl:
+    with YoutubeDL() as ydl:
         ydl.download([url])
 
 
