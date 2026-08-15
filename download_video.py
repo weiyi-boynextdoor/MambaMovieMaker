@@ -31,7 +31,7 @@ def download(
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
 
-    with YoutubeDL() as ydl:
+    with YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
 
