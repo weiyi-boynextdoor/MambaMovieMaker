@@ -19,6 +19,9 @@ def download(
         template from yt-dlp will be used (e.g. "%(title)s.%(ext)s").
     """
     ydl_opts: dict = {
+        # YouTube requires an external JavaScript runtime for player challenges.
+        # Node.js 22+ is supported but must be explicitly enabled by yt-dlp.
+        "js_runtimes": {"node": {}},
         "http_headers": {
             # "Origin": "https://www.bilibili.com",
             # "Referer": "https://www.bilibili.com/",
