@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Extract HLS playback links from a GDC Vault presentation page."""
+"""
+Extract HLS playback links from a GDC Vault presentation page.
+Download with this command:
+ffmpeg -i "xxx.m3u8" -c copy -movflags +faststart "output.mp4"
+"""
 
 from __future__ import annotations
 
